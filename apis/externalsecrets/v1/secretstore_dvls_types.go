@@ -26,6 +26,10 @@ type DVLSProvider struct {
 	// +kubebuilder:validation:Required
 	ServerURL string `json:"serverUrl"`
 
+	// Vault is the name or UUID of the vault to fetch secrets from.
+	// +kubebuilder:validation:Required
+	Vault string `json:"vault"`
+
 	// Insecure allows connecting to DVLS over plain HTTP.
 	// This is NOT RECOMMENDED for production use.
 	// Set to true only if you understand the security implications.

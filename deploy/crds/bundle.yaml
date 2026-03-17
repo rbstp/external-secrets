@@ -3858,9 +3858,13 @@ spec:
                         serverUrl:
                           description: ServerURL is the DVLS instance URL (e.g., https://dvls.example.com).
                           type: string
+                        vault:
+                          description: Vault is the name or UUID of the vault to fetch secrets from.
+                          type: string
                       required:
                         - auth
                         - serverUrl
+                        - vault
                       type: object
                     fake:
                       description: Fake configures a store with static key/value pairs
@@ -15626,9 +15630,13 @@ spec:
                         serverUrl:
                           description: ServerURL is the DVLS instance URL (e.g., https://dvls.example.com).
                           type: string
+                        vault:
+                          description: Vault is the name or UUID of the vault to fetch secrets from.
+                          type: string
                       required:
                         - auth
                         - serverUrl
+                        - vault
                       type: object
                     fake:
                       description: Fake configures a store with static key/value pairs

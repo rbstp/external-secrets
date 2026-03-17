@@ -20,10 +20,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/Devolutions/go-dvls"
+	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
 
 	esv1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
@@ -36,14 +36,23 @@ var errNotImplemented = errors.New("not implemented")
 var _ esv1.SecretsClient = &Client{}
 
 // Client implements the SecretsClient interface for DVLS.
+// The nameCache avoids repeated GetEntries calls when the same
+// entry name is referenced more than once during a single reconciliation.
 type Client struct {
-	dvls credentialClient
+	cred      credentialClient
+	vaultID   string
+	nameCache map[string]string
 }
 
 type credentialClient interface {
 	GetByID(ctx context.Context, vaultID, entryID string) (dvls.Entry, error)
+	GetEntries(ctx context.Context, vaultID string, opts dvls.GetEntriesOptions) ([]dvls.Entry, error)
 	Update(ctx context.Context, entry dvls.Entry) (dvls.Entry, error)
 	DeleteByID(ctx context.Context, vaultID, entryID string) error
+}
+
+type vaultNameGetter interface {
+	GetByName(ctx context.Context, name string) (dvls.Vault, error)
 }
 
 type realCredentialClient struct {
@@ -52,6 +61,10 @@ type realCredentialClient struct {
 
 func (r *realCredentialClient) GetByID(ctx context.Context, vaultID, entryID string) (dvls.Entry, error) {
 	return r.cred.GetByIdWithContext(ctx, vaultID, entryID)
+}
+
+func (r *realCredentialClient) GetEntries(ctx context.Context, vaultID string, opts dvls.GetEntriesOptions) ([]dvls.Entry, error) {
+	return r.cred.GetEntriesWithContext(ctx, vaultID, opts)
 }
 
 func (r *realCredentialClient) Update(ctx context.Context, entry dvls.Entry) (dvls.Entry, error) {
@@ -63,18 +76,21 @@ func (r *realCredentialClient) DeleteByID(ctx context.Context, vaultID, entryID 
 }
 
 // NewClient creates a new DVLS secrets client.
-func NewClient(dvlsClient credentialClient) *Client {
-	return &Client{dvls: dvlsClient}
+func NewClient(cred credentialClient, vaultID string) *Client {
+	return &Client{cred: cred, vaultID: vaultID, nameCache: make(map[string]string)}
 }
 
 // GetSecret retrieves a secret from DVLS.
 func (c *Client) GetSecret(ctx context.Context, ref esv1.ExternalSecretDataRemoteRef) ([]byte, error) {
-	vaultID, entryID, err := c.parseSecretRef(ref.Key)
+	entryID, err := c.resolveEntryRef(ctx, ref.Key)
+	if isNotFoundError(err) {
+		return nil, esv1.NoSecretErr
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	entry, err := c.dvls.GetByID(ctx, vaultID, entryID)
+	entry, err := c.cred.GetByID(ctx, c.vaultID, entryID)
 	if isNotFoundError(err) {
 		return nil, esv1.NoSecretErr
 	}
@@ -82,7 +98,7 @@ func (c *Client) GetSecret(ctx context.Context, ref esv1.ExternalSecretDataRemot
 		return nil, fmt.Errorf(errFailedToGetEntry, err)
 	}
 
-	secretMap, err := c.entryToSecretMap(entry)
+	secretMap, err := entryToSecretMap(entry)
 	if err != nil {
 		return nil, err
 	}
@@ -102,12 +118,15 @@ func (c *Client) GetSecret(ctx context.Context, ref esv1.ExternalSecretDataRemot
 
 // GetSecretMap retrieves all fields from a DVLS entry.
 func (c *Client) GetSecretMap(ctx context.Context, ref esv1.ExternalSecretDataRemoteRef) (map[string][]byte, error) {
-	vaultID, entryID, err := c.parseSecretRef(ref.Key)
+	entryID, err := c.resolveEntryRef(ctx, ref.Key)
+	if isNotFoundError(err) {
+		return nil, esv1.NoSecretErr
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	entry, err := c.dvls.GetByID(ctx, vaultID, entryID)
+	entry, err := c.cred.GetByID(ctx, c.vaultID, entryID)
 	if isNotFoundError(err) {
 		return nil, esv1.NoSecretErr
 	}
@@ -115,7 +134,7 @@ func (c *Client) GetSecretMap(ctx context.Context, ref esv1.ExternalSecretDataRe
 		return nil, fmt.Errorf(errFailedToGetEntry, err)
 	}
 
-	return c.entryToSecretMap(entry)
+	return entryToSecretMap(entry)
 }
 
 // GetAllSecrets is not implemented for DVLS.
@@ -128,7 +147,10 @@ func (c *Client) PushSecret(ctx context.Context, secret *corev1.Secret, data esv
 	if secret == nil {
 		return errors.New("secret is required for DVLS push")
 	}
-	vaultID, entryID, err := c.parseSecretRef(data.GetRemoteKey())
+	entryID, err := c.resolveEntryRef(ctx, data.GetRemoteKey())
+	if isNotFoundError(err) {
+		return fmt.Errorf("entry %s not found in vault %s: entry must exist before pushing secrets", data.GetRemoteKey(), c.vaultID)
+	}
 	if err != nil {
 		return err
 	}
@@ -138,9 +160,9 @@ func (c *Client) PushSecret(ctx context.Context, secret *corev1.Secret, data esv
 		return err
 	}
 
-	existingEntry, err := c.dvls.GetByID(ctx, vaultID, entryID)
+	existingEntry, err := c.cred.GetByID(ctx, c.vaultID, entryID)
 	if isNotFoundError(err) {
-		return fmt.Errorf("entry %s not found in vault %s: entry must exist before pushing secrets", entryID, vaultID)
+		return fmt.Errorf("entry %s not found in vault %s: entry must exist before pushing secrets", entryID, c.vaultID)
 	}
 	if err != nil {
 		return fmt.Errorf(errFailedToGetEntry, err)
@@ -151,7 +173,7 @@ func (c *Client) PushSecret(ctx context.Context, secret *corev1.Secret, data esv
 		return err
 	}
 
-	_, err = c.dvls.Update(ctx, existingEntry)
+	_, err = c.cred.Update(ctx, existingEntry)
 	if err != nil {
 		return fmt.Errorf("failed to update entry: %w", err)
 	}
@@ -160,21 +182,33 @@ func (c *Client) PushSecret(ctx context.Context, secret *corev1.Secret, data esv
 
 // DeleteSecret deletes a secret from DVLS.
 func (c *Client) DeleteSecret(ctx context.Context, ref esv1.PushSecretRemoteRef) error {
-	vaultID, entryID, err := c.parseSecretRef(ref.GetRemoteKey())
+	entryID, err := c.resolveEntryRef(ctx, ref.GetRemoteKey())
+	if isNotFoundError(err) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	return c.dvls.DeleteByID(ctx, vaultID, entryID)
+	if err := c.cred.DeleteByID(ctx, c.vaultID, entryID); err != nil {
+		if isNotFoundError(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete entry %q from vault %q: %w", entryID, c.vaultID, err)
+	}
+	return nil
 }
 
 // SecretExists checks if a secret exists in DVLS.
 func (c *Client) SecretExists(ctx context.Context, ref esv1.PushSecretRemoteRef) (bool, error) {
-	vaultID, entryID, err := c.parseSecretRef(ref.GetRemoteKey())
+	entryID, err := c.resolveEntryRef(ctx, ref.GetRemoteKey())
+	if isNotFoundError(err) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
 
-	_, err = c.dvls.GetByID(ctx, vaultID, entryID)
+	_, err = c.cred.GetByID(ctx, c.vaultID, entryID)
 	if isNotFoundError(err) {
 		return false, nil
 	}
@@ -186,8 +220,11 @@ func (c *Client) SecretExists(ctx context.Context, ref esv1.PushSecretRemoteRef)
 
 // Validate checks if the client is properly configured.
 func (c *Client) Validate() (esv1.ValidationResult, error) {
-	if c.dvls == nil {
+	if c.cred == nil {
 		return esv1.ValidationResultError, errors.New("DVLS client is not initialized")
+	}
+	if c.vaultID == "" {
+		return esv1.ValidationResultError, errors.New("DVLS vault ID is not set")
 	}
 	return esv1.ValidationResultReady, nil
 }
@@ -197,29 +234,89 @@ func (c *Client) Close(_ context.Context) error {
 	return nil
 }
 
-// parseSecretRef parses the secret reference key.
-// Format: "<vault-id>/<entry-id>".
-func (c *Client) parseSecretRef(key string) (vaultID, entryID string, err error) {
-	parts := strings.SplitN(key, "/", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid key format: expected '<vault-id>/<entry-id>', got %q", key)
+// resolveEntryRef resolves an entry reference to a UUID.
+// The key can be:
+//   - A UUID: used directly.
+//   - A name: looked up via GetEntries.
+//   - A path/name: "folder/subfolder/entry-name" — path is used to filter.
+func (c *Client) resolveEntryRef(ctx context.Context, key string) (entryID string, err error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", errors.New("entry reference cannot be empty")
 	}
 
-	vaultID = strings.TrimSpace(parts[0])
-	entryID = strings.TrimSpace(parts[1])
-
-	if vaultID == "" {
-		return "", "", errors.New("vault ID cannot be empty")
-	}
-	if entryID == "" {
-		return "", "", errors.New("entry ID cannot be empty")
+	// UUID passes through directly.
+	if isUUID(key) {
+		return key, nil
 	}
 
-	return vaultID, entryID, nil
+	// Return cached result if available.
+	if id, ok := c.nameCache[key]; ok {
+		return id, nil
+	}
+
+	// Split into optional path + entry name.
+	entryName, entryPath := parseEntryRef(key)
+	if entryName == "" {
+		return "", errors.New("entry name cannot be empty")
+	}
+
+	opts := dvls.GetEntriesOptions{Name: &entryName}
+	if entryPath != "" {
+		opts.Path = &entryPath
+	}
+
+	entries, err := c.cred.GetEntries(ctx, c.vaultID, opts)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve entry %q: %w", key, err)
+	}
+
+	switch len(entries) {
+	case 0:
+		return "", fmt.Errorf("entry %q not found in vault: %w", key, dvls.ErrEntryNotFound)
+	case 1:
+		c.nameCache[key] = entries[0].Id
+		return entries[0].Id, nil
+	default:
+		return "", fmt.Errorf("found %d credential entries named %q; use the entry UUID or add a folder path for disambiguation", len(entries), entryName)
+	}
+}
+
+// resolveVaultRef resolves a vault reference (name or UUID) to a vault UUID.
+func resolveVaultRef(ctx context.Context, vaultRef string, vc vaultNameGetter) (string, error) {
+	if isUUID(vaultRef) {
+		return vaultRef, nil
+	}
+	vault, err := vc.GetByName(ctx, vaultRef)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve vault %q: %w", vaultRef, err)
+	}
+	return vault.Id, nil
+}
+
+// parseEntryRef splits an entry reference into name and optional path.
+// Both forward slashes and backslashes are accepted as path separators.
+// The last separator splits the path from the entry name.
+// Paths are normalized to backslashes to match the DVLS path format.
+// e.g. "folder/subfolder/my-entry" → name="my-entry", path="folder\subfolder".
+// e.g. "folder\subfolder\my-entry" → name="my-entry", path="folder\subfolder".
+func parseEntryRef(ref string) (name, path string) {
+	// Normalize forward slashes to backslashes.
+	normalized := strings.ReplaceAll(ref, "/", `\`)
+	if idx := strings.LastIndex(normalized, `\`); idx >= 0 {
+		return normalized[idx+1:], normalized[:idx]
+	}
+	return ref, ""
+}
+
+// isUUID returns true if the string is a valid UUID.
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
 }
 
 // entryToSecretMap converts a DVLS entry to a map of secret values.
-func (c *Client) entryToSecretMap(entry dvls.Entry) (map[string][]byte, error) {
+func entryToSecretMap(entry dvls.Entry) (map[string][]byte, error) {
 	secretMap, err := entry.ToCredentialMap()
 	if err != nil {
 		return nil, err
@@ -259,10 +356,17 @@ func isNotFoundError(err error) bool {
 		return false
 	}
 
+	if errors.Is(err, dvls.ErrVaultNotFound) {
+		return false
+	}
+
 	if dvls.IsNotFound(err) {
 		return true
 	}
 
-	var reqErr dvls.RequestError
-	return errors.As(err, &reqErr) && reqErr.StatusCode == http.StatusNotFound
+	if errors.Is(err, dvls.ErrEntryNotFound) {
+		return true
+	}
+
+	return false
 }
