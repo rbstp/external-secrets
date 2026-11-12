@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../../pictures/eso-round-logo.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -27,10 +27,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -3516,7 +3516,7 @@
   <span class="md-ellipsis">
     
   
-    Github Actions Secrets
+    GitHub Actions and Dependabot Secrets
   
 
     
@@ -4006,6 +4006,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#custom-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom fields
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4309,7 +4320,7 @@
   <span class="md-ellipsis">
     
   
-    Nebius MysteryBox
+    Nebius SecretStash
   
 
     
@@ -5134,6 +5145,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#custom-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom fields
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5258,6 +5280,58 @@ By default the secret contains name, username, uri, password and description.</p
 <span class="w">        </span><span class="nt">name</span><span class="p">:</span>
 <span class="w">          </span><span class="nt">regexp</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;.*&quot;</span>
 </code></pre></div>
+<h2 id="custom-fields">Custom fields</h2>
+<p>Passbolt resources can carry arbitrary custom fields beyond the standard
+<code>name</code>, <code>username</code>, <code>password</code>, <code>uri</code>, and <code>description</code> properties.
+ESO surfaces each custom field through the <code>custom_fields.&lt;name&gt;</code> property
+syntax, where <code>&lt;name&gt;</code> is the field's display name as configured in Passbolt.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">external-secrets.io/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ExternalSecret</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">passbolt-custom-fields-example</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">refreshInterval</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1h0m0s&quot;</span>
+<span class="w">  </span><span class="nt">secretStoreRef</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">passbolt</span>
+<span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SecretStore</span>
+<span class="w">  </span><span class="nt">target</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">passbolt-custom-fields</span>
+<span class="w">  </span><span class="nt">data</span><span class="p">:</span>
+<span class="w">    </span><span class="c1"># Fetch a single custom field by its display name (metadata_key).</span>
+<span class="w">    </span><span class="c1"># The property value is the literal prefix &quot;custom_fields.&quot; followed by</span>
+<span class="w">    </span><span class="c1"># the name of the field as configured in Passbolt.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">secretKey</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">api_token</span>
+<span class="w">    </span><span class="nt">remoteRef</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">e22487a8-feb8-4591-95aa-14b193930cb4</span><span class="w"> </span><span class="c1"># Replace with the ID of an existing Passbolt secret</span>
+<span class="w">      </span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">custom_fields.api-token</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">secretKey</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deploy_key</span>
+<span class="w">    </span><span class="nt">remoteRef</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">e22487a8-feb8-4591-95aa-14b193930cb4</span>
+<span class="w">      </span><span class="nt">property</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">custom_fields.deploy-key</span>
+<span class="w">    </span><span class="c1"># Omitting property returns the full secret as JSON, with custom_fields</span>
+<span class="w">    </span><span class="c1"># included as a nested object keyed by the field display name.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">secretKey</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">full_secret</span>
+<span class="w">    </span><span class="nt">remoteRef</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">e22487a8-feb8-4591-95aa-14b193930cb4</span>
+</code></pre></div>
+<p>The above external secret produces a Kubernetes Secret in the following form:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Secret</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">passbolt-custom-fields</span>
+<span class="nt">data</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">api_token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-api-token-value</span>
+<span class="w">  </span><span class="nt">deploy_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ssh-ed25519-AAAA...</span>
+<span class="w">  </span><span class="nt">full_secret</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;{&quot;name&quot;:&quot;my-service&quot;,&quot;username&quot;:&quot;deploy&quot;,&quot;password&quot;:&quot;supersecretpassword&quot;,&quot;uri&quot;:&quot;https://example.com&quot;,&quot;description&quot;:&quot;&quot;,&quot;custom_fields&quot;:{&quot;api-token&quot;:&quot;my-api-token-value&quot;,&quot;deploy-key&quot;:&quot;ssh-ed25519-AAAA...&quot;}}&#39;</span>
+<span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Opaque</span>
+</code></pre></div>
+<p>When no <code>property</code> is specified, the full secret is returned as a JSON object.
+The <code>custom_fields</code> key is included in that object whenever the resource has at
+least one named custom field.</p>
+<p>Passbolt stores each half of a custom field on whichever side the field's
+configuration calls for: a name is either cleartext metadata or encrypted
+alongside the secret, and so is a value. ESO decrypts both sides before reading
+them, so a field is addressable by its display name either way.</p>
 
 
 
@@ -5322,10 +5396,10 @@ For a list of trademarks of The Linux Foundation, please see our <a href="https:
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.expand"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>
