@@ -36,6 +36,10 @@ func (r *realVaultClient) GetByName(ctx context.Context, name string) (dvls.Vaul
 	return r.vaults.GetByNameWithContext(ctx, name)
 }
 
+func (r *realVaultClient) ContentReadable(ctx context.Context, id string) (bool, error) {
+	return r.vaults.ContentReadableWithContext(ctx, id)
+}
+
 func (r *realVaultClient) List(ctx context.Context) ([]dvls.Vault, error) {
 	return r.vaults.ListWithContext(ctx)
 }

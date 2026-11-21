@@ -142,14 +142,17 @@ func (m *mockCredentialClient) DeleteByID(_ context.Context, vaultID, entryID st
 // --- Mock vault client ---
 
 type mockVaultClient struct {
-	vaults    map[string]dvls.Vault
-	getErr    error
-	listErr   error
-	duplicate string
-	listGate  chan struct{}
+	vaults            map[string]dvls.Vault
+	getErr            error
+	listErr           error
+	duplicate         string
+	listGate          chan struct{}
+	contentUnreadable bool
+	contentErr        error
 
-	mu        sync.Mutex
-	listCalls int
+	mu           sync.Mutex
+	listCalls    int
+	contentCalls int
 }
 
 func newMockVaultClient(vaults map[string]dvls.Vault) *mockVaultClient {
@@ -167,6 +170,17 @@ func (m *mockVaultClient) GetByName(_ context.Context, name string) (dvls.Vault,
 		return v, nil
 	}
 	return dvls.Vault{}, dvls.ErrVaultNotFound
+}
+
+// ContentReadable reports the vault content as readable unless a test opts into an outage.
+func (m *mockVaultClient) ContentReadable(_ context.Context, _ string) (bool, error) {
+	m.mu.Lock()
+	m.contentCalls++
+	m.mu.Unlock()
+	if m.contentErr != nil {
+		return false, m.contentErr
+	}
+	return !m.contentUnreadable, nil
 }
 
 func (m *mockVaultClient) List(_ context.Context) ([]dvls.Vault, error) {
@@ -969,22 +983,19 @@ func TestClient_GetSecret_VaultErrorIsNotNoSecretErr(t *testing.T) {
 // keys hit this path with no name resolution at all, so the vault content must be confirmed
 // readable before the entry is reported absent.
 func TestClient_DirectNotFound_DisambiguatesVault(t *testing.T) {
-	notFound := &dvls.RequestError{Err: errors.New("unexpected status code 404"), StatusCode: http.StatusNotFound}
 	legacyKey := testVaultUUID + "/" + testEntryUUID
 
-	newClient := func(vaultReachable bool) (*Client, *mockCredentialClient) {
-		c, mockCred, _ := newDynamicTestClient(nil, defaultTestVaults())
-		if !vaultReachable {
-			mockCred.getEntriesErr = notFound
-		}
-		return c, mockCred
+	newClient := func(vaultReachable bool) (*Client, *mockVaultClient) {
+		c, _, mockVault := newDynamicTestClient(nil, defaultTestVaults())
+		mockVault.contentUnreadable = !vaultReachable
+		return c, mockVault
 	}
 
 	t.Run("GetSecret reports absent when vault is reachable", func(t *testing.T) {
-		c, mockCred := newClient(true)
+		c, mockVault := newClient(true)
 		_, err := c.GetSecret(context.Background(), esv1.ExternalSecretDataRemoteRef{Key: legacyKey})
 		assert.ErrorIs(t, err, esv1.NoSecretErr)
-		assert.Equal(t, map[string]int{testVaultUUID: 1}, mockCred.entriesCalls)
+		assert.Equal(t, 1, mockVault.contentCalls)
 	})
 
 	t.Run("GetSecret errors when vault is unreachable", func(t *testing.T) {
@@ -1037,21 +1048,23 @@ func TestClient_DirectNotFound_DisambiguatesVault(t *testing.T) {
 	})
 }
 
-// An identity that can read a vault's metadata but not its content gets a 404 for the entry and for
-// the entry list, and a 403 on the list when it can open the vault but not view its entries. Neither
-// may become NoSecretErr, or deletionPolicy: Delete would prune a Secret whose entry still exists.
+// An identity that can read a vault's metadata but not its content gets a 404 for the entry, and the
+// content check reports the vault unreadable (or fails). Neither may become NoSecretErr, or
+// deletionPolicy: Delete would prune a Secret whose entry still exists.
 func TestClient_DirectNotFound_ContentDenied(t *testing.T) {
 	legacyKey := testVaultUUID + "/" + testEntryUUID
 
-	for _, status := range []int{http.StatusNotFound, http.StatusForbidden} {
-		listErr := &dvls.RequestError{Err: fmt.Errorf("unexpected status code %d", status), StatusCode: status}
+	for name, configure := range map[string]func(*mockVaultClient){
+		"content unreadable":   func(m *mockVaultClient) { m.contentUnreadable = true },
+		"content check failed": func(m *mockVaultClient) { m.contentErr = errors.New("dial tcp: connection refused") },
+	} {
 		newClient := func() *Client {
-			c, mockCred, _ := newDynamicTestClient(nil, defaultTestVaults())
-			mockCred.getEntriesErr = listErr
+			c, _, mockVault := newDynamicTestClient(nil, defaultTestVaults())
+			configure(mockVault)
 			return c
 		}
 
-		t.Run(fmt.Sprintf("list %d", status), func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			_, err := newClient().GetSecret(context.Background(), esv1.ExternalSecretDataRemoteRef{Key: legacyKey})
 			assert.Error(t, err)
 			assert.NotErrorIs(t, err, esv1.NoSecretErr)
