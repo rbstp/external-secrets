@@ -23,8 +23,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/Devolutions/go-dvls"
 	"github.com/stretchr/testify/assert"
@@ -68,7 +68,7 @@ func newPaginatedDVLSServer(t *testing.T, vaults []mockVault) *httptest.Server {
 		if name := r.URL.Query().Get("name"); name != "" {
 			matches = nil
 			for _, v := range vaults {
-				if strings.EqualFold(v.name, name) {
+				if ordinalIgnoreCase(v.name, name) {
 					matches = append(matches, v)
 				}
 			}
@@ -179,6 +179,22 @@ func TestClient_GetSecret_RealClientContentDenied(t *testing.T) {
 	}
 }
 
+// ordinalIgnoreCase stands in for the .NET OrdinalIgnoreCase comparison DVLS applies to the vault name
+// filter: it maps each character to its simple uppercase form, so unlike strings.EqualFold it keeps the
+// Kelvin sign apart from k, and unlike strings.ToLower it keeps İ apart from i and matches ς with Σ.
+func ordinalIgnoreCase(a, b string) bool {
+	ra, rb := []rune(a), []rune(b)
+	if len(ra) != len(rb) {
+		return false
+	}
+	for i := range ra {
+		if unicode.ToUpper(ra[i]) != unicode.ToUpper(rb[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func newMockVaults() []mockVault {
 	vaults := make([]mockVault, 30)
 	for i := range vaults {
@@ -255,4 +271,54 @@ func TestResolveVault_RealClientIndexAcrossPages(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "found multiple vaults named")
 	})
+}
+
+// A name without an exact match goes to the server's name filter, so the provider never picks a vault
+// the server would call a different one, whatever Go's own case mapping says.
+func TestResolveVault_RealClientUnicodeNames(t *testing.T) {
+	kelvinKeys := string(rune(0x212A)) + "eys"
+	vaults := []mockVault{
+		{id: "00000000-0000-0000-0000-000000000041", name: "İnfra"},
+		{id: "00000000-0000-0000-0000-000000000042", name: "Σ-ops"},
+		{id: "00000000-0000-0000-0000-000000000043", name: kelvinKeys},
+	}
+	server := newPaginatedDVLSServer(t, vaults)
+
+	client, err := dvls.NewClient("app-id", "app-secret", server.URL)
+	require.NoError(t, err)
+
+	c := NewClient(nil, &realVaultClient{vaults: client.Vaults}, "", false)
+
+	found := []struct {
+		name   string
+		vault  string
+		wantID string
+	}{
+		{name: "exact dotted capital I", vault: "İnfra", wantID: vaults[0].id},
+		{name: "final sigma matches capital sigma, which lowercase to different letters", vault: "ς-ops", wantID: vaults[1].id},
+		{name: "exact Kelvin sign", vault: kelvinKeys, wantID: vaults[2].id},
+	}
+	for _, tt := range found {
+		t.Run(tt.name, func(t *testing.T) {
+			id, err := c.resolveVault(context.Background(), tt.vault)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantID, id)
+		})
+	}
+
+	notFound := []struct {
+		name  string
+		vault string
+	}{
+		{name: "i is not dotted capital I, though Go lowercases İ to i", vault: "infra"},
+		{name: "k is not the Kelvin sign, though strings.EqualFold matches them", vault: "keys"},
+	}
+	for _, tt := range notFound {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := c.resolveVault(context.Background(), tt.vault)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, dvls.ErrVaultNotFound)
+			assert.False(t, isNotFoundError(err))
+		})
+	}
 }

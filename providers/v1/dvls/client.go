@@ -73,11 +73,10 @@ type Client struct {
 }
 
 // vaultNames maps vault names to UUIDs. DVLS matches names ignoring case but lets two vaults differ
-// only by case, so an exact match wins and folded, keyed by lowercase name, is the fallback; an empty
-// value in folded marks a lowercase name that several vaults share.
+// only by case, so an exact match wins. matched holds the names the server resolved ignoring case.
 type vaultNames struct {
-	exact  map[string]string
-	folded map[string]string
+	exact   map[string]string
+	matched map[string]string
 }
 
 type credentialClient interface {
@@ -358,18 +357,38 @@ func (c *Client) resolveVault(ctx context.Context, vaultRef string) (string, err
 	if id, ok := index.exact[vaultRef]; ok {
 		return id, nil
 	}
-	id, ok := index.folded[strings.ToLower(vaultRef)]
-	if !ok {
-		return "", &vaultError{vaultRef: vaultRef, err: dvls.ErrVaultNotFound}
-	}
-	if id == "" {
-		return "", fmt.Errorf("found multiple vaults named %q ignoring case; use the exact name or the vault UUID", vaultRef)
-	}
-	return id, nil
+	return c.matchVaultName(ctx, index, vaultRef)
 }
 
-// loadVaultIndex lists every visible vault once and indexes it by name. GetByName would
-// enumerate all vaults per lookup, so a single index keeps a multi-vault key set to one call.
+// matchVaultName resolves a name with no exact match through the server's name filter. DVLS compares
+// vault names with .NET OrdinalIgnoreCase, which no Go case folding reproduces (strings.EqualFold
+// matches the Kelvin sign with k, which DVLS keeps apart), so only the server can say which vault a
+// name means.
+func (c *Client) matchVaultName(ctx context.Context, index *vaultNames, vaultRef string) (string, error) {
+	c.indexMu.Lock()
+	defer c.indexMu.Unlock()
+
+	if id, ok := index.matched[vaultRef]; ok {
+		return id, nil
+	}
+
+	vault, err := c.vaults.GetByName(ctx, vaultRef)
+	if errors.Is(err, dvls.ErrMultipleVaultsFound) {
+		return "", fmt.Errorf("found multiple vaults named %q ignoring case; use the exact name or the vault UUID", vaultRef)
+	}
+	if err != nil {
+		return "", &vaultError{vaultRef: vaultRef, err: err}
+	}
+	if !isUUID(vault.Id) {
+		return "", fmt.Errorf("vault %q has an invalid UUID: %q", vault.Name, vault.Id)
+	}
+
+	index.matched[vaultRef] = vault.Id
+	return vault.Id, nil
+}
+
+// loadVaultIndex lists every visible vault once and indexes it by exact name, so a multi-vault key
+// set that names its vaults exactly costs one call.
 // The lock is held across List so concurrent callers share one enumeration.
 func (c *Client) loadVaultIndex(ctx context.Context) (*vaultNames, error) {
 	c.indexMu.Lock()
@@ -385,8 +404,8 @@ func (c *Client) loadVaultIndex(ctx context.Context) (*vaultNames, error) {
 	}
 
 	index := &vaultNames{
-		exact:  make(map[string]string, len(vaults)),
-		folded: make(map[string]string, len(vaults)),
+		exact:   make(map[string]string, len(vaults)),
+		matched: make(map[string]string),
 	}
 	for _, v := range vaults {
 		// DVLS enforces unique vault names; fail loudly rather than pick one arbitrarily.
@@ -397,13 +416,6 @@ func (c *Client) loadVaultIndex(ctx context.Context) (*vaultNames, error) {
 			return nil, fmt.Errorf("vault %q has an invalid UUID: %q", v.Name, v.Id)
 		}
 		index.exact[v.Name] = v.Id
-
-		key := strings.ToLower(v.Name)
-		if _, shared := index.folded[key]; shared {
-			index.folded[key] = ""
-		} else {
-			index.folded[key] = v.Id
-		}
 	}
 
 	c.vaultIndex = index

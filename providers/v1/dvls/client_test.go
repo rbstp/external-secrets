@@ -602,8 +602,8 @@ func TestResolveRef_VaultInKey(t *testing.T) {
 		assert.False(t, isNotFoundError(err))
 	})
 
-	// The vault index is built once per client: GetByName enumerates every vault per call,
-	// so resolving N names must not cost N enumerations.
+	// The vault index is built once per client, so resolving N exact names must not cost
+	// N requests.
 	t.Run("vault index built once", func(t *testing.T) {
 		other := dvls.Entry{
 			Id: testEntryUUID4, Name: "test", VaultId: testVaultUUID2,
