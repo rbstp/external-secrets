@@ -89,7 +89,6 @@ type credentialClient interface {
 
 type vaultGetter interface {
 	GetByName(ctx context.Context, name string) (dvls.Vault, error)
-	Get(ctx context.Context, id string) (dvls.Vault, error)
 	List(ctx context.Context) ([]dvls.Vault, error)
 }
 
@@ -140,7 +139,7 @@ func (c *Client) GetSecret(ctx context.Context, ref esv1.ExternalSecretDataRemot
 		return nil, fmt.Errorf(errVaultNotFound, vaultID, err)
 	}
 	if isNotFoundError(err) {
-		if vaultErr := c.confirmVault(ctx, vaultID); vaultErr != nil {
+		if vaultErr := c.confirmVault(ctx, vaultID, entryID); vaultErr != nil {
 			return nil, vaultErr
 		}
 		return nil, esv1.NoSecretErr
@@ -182,7 +181,7 @@ func (c *Client) GetSecretMap(ctx context.Context, ref esv1.ExternalSecretDataRe
 		return nil, fmt.Errorf(errVaultNotFound, vaultID, err)
 	}
 	if isNotFoundError(err) {
-		if vaultErr := c.confirmVault(ctx, vaultID); vaultErr != nil {
+		if vaultErr := c.confirmVault(ctx, vaultID, entryID); vaultErr != nil {
 			return nil, vaultErr
 		}
 		return nil, esv1.NoSecretErr
@@ -222,7 +221,7 @@ func (c *Client) PushSecret(ctx context.Context, secret *corev1.Secret, data esv
 		return fmt.Errorf(errVaultNotFound, vaultID, err)
 	}
 	if isNotFoundError(err) {
-		if vaultErr := c.confirmVault(ctx, vaultID); vaultErr != nil {
+		if vaultErr := c.confirmVault(ctx, vaultID, entryID); vaultErr != nil {
 			return vaultErr
 		}
 		return fmt.Errorf("entry %s not found in vault %s: entry must exist before pushing secrets", entryID, vaultID)
@@ -255,7 +254,7 @@ func (c *Client) DeleteSecret(ctx context.Context, ref esv1.PushSecretRemoteRef)
 	if err := c.cred.DeleteByID(ctx, vaultID, entryID); err != nil {
 		if isNotFoundError(err) {
 			// Only idempotent once the vault is known to be reachable.
-			if vaultErr := c.confirmVault(ctx, vaultID); vaultErr != nil {
+			if vaultErr := c.confirmVault(ctx, vaultID, entryID); vaultErr != nil {
 				return vaultErr
 			}
 			return nil
@@ -277,7 +276,7 @@ func (c *Client) SecretExists(ctx context.Context, ref esv1.PushSecretRemoteRef)
 
 	_, err = c.cred.GetByID(ctx, vaultID, entryID)
 	if isNotFoundError(err) {
-		if vaultErr := c.confirmVault(ctx, vaultID); vaultErr != nil {
+		if vaultErr := c.confirmVault(ctx, vaultID, entryID); vaultErr != nil {
 			return false, vaultErr
 		}
 		return false, nil
@@ -331,14 +330,12 @@ func (c *Client) resolveRef(ctx context.Context, key string) (vaultID, entryID s
 }
 
 // confirmVault reports whether a 404 from the entry endpoint really means the entry is gone.
-// The SDK addresses entries as /vault/{vaultID}/entry/{entryID}, so a 404 is ambiguous: an
-// unreachable vault looks identical to a deleted entry. Returning nil means the vault is
-// reachable and the caller may treat the entry as absent.
-func (c *Client) confirmVault(ctx context.Context, vaultID string) error {
-	if c.vaults == nil {
-		return nil
-	}
-	if _, err := c.vaults.Get(ctx, vaultID); err != nil {
+// DVLS answers the same 404 for a deleted entry, an unknown vault and a vault whose content the
+// caller cannot open, while GET vault/{id} succeeds with metadata access alone. Listing entries
+// runs the same vault checks as reading one, so only its success lets the caller treat the entry
+// as absent. Filtering on the entry ID as a name keeps the probe to one small page.
+func (c *Client) confirmVault(ctx context.Context, vaultID, entryID string) error {
+	if _, err := c.cred.GetEntries(ctx, vaultID, dvls.GetEntriesOptions{Name: &entryID}); err != nil {
 		return &vaultError{vaultRef: vaultID, err: err}
 	}
 	return nil

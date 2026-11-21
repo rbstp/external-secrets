@@ -142,16 +142,14 @@ func (m *mockCredentialClient) DeleteByID(_ context.Context, vaultID, entryID st
 // --- Mock vault client ---
 
 type mockVaultClient struct {
-	vaults     map[string]dvls.Vault
-	getErr     error
-	getByIDErr error
-	listErr    error
-	duplicate  string
-	listGate   chan struct{}
+	vaults    map[string]dvls.Vault
+	getErr    error
+	listErr   error
+	duplicate string
+	listGate  chan struct{}
 
 	mu        sync.Mutex
 	listCalls int
-	getCalls  int
 }
 
 func newMockVaultClient(vaults map[string]dvls.Vault) *mockVaultClient {
@@ -169,18 +167,6 @@ func (m *mockVaultClient) GetByName(_ context.Context, name string) (dvls.Vault,
 		return v, nil
 	}
 	return dvls.Vault{}, dvls.ErrVaultNotFound
-}
-
-// Get reports the vault as reachable unless getByIDErr is set, so tests that expect a
-// plain missing entry keep working and only vault-outage tests opt in.
-func (m *mockVaultClient) Get(_ context.Context, id string) (dvls.Vault, error) {
-	m.mu.Lock()
-	m.getCalls++
-	m.mu.Unlock()
-	if m.getByIDErr != nil {
-		return dvls.Vault{}, m.getByIDErr
-	}
-	return dvls.Vault{Id: id}, nil
 }
 
 func (m *mockVaultClient) List(_ context.Context) ([]dvls.Vault, error) {
@@ -979,26 +965,26 @@ func TestClient_GetSecret_VaultErrorIsNotNoSecretErr(t *testing.T) {
 }
 
 // The SDK addresses entries as /vault/{vaultID}/entry/{entryID}, so a direct 404 cannot
-// distinguish a deleted entry from an unreachable vault. Legacy "<vault-uuid>/<entry-uuid>"
-// keys hit this path with no name resolution at all, so the vault must be confirmed before
-// the entry is reported absent.
+// distinguish a deleted entry from a vault the caller cannot open. Legacy "<vault-uuid>/<entry-uuid>"
+// keys hit this path with no name resolution at all, so the vault content must be confirmed
+// readable before the entry is reported absent.
 func TestClient_DirectNotFound_DisambiguatesVault(t *testing.T) {
 	notFound := &dvls.RequestError{Err: errors.New("unexpected status code 404"), StatusCode: http.StatusNotFound}
 	legacyKey := testVaultUUID + "/" + testEntryUUID
 
-	newClient := func(vaultReachable bool) (*Client, *mockVaultClient) {
-		c, _, mockVault := newDynamicTestClient(nil, defaultTestVaults())
+	newClient := func(vaultReachable bool) (*Client, *mockCredentialClient) {
+		c, mockCred, _ := newDynamicTestClient(nil, defaultTestVaults())
 		if !vaultReachable {
-			mockVault.getByIDErr = notFound
+			mockCred.getEntriesErr = notFound
 		}
-		return c, mockVault
+		return c, mockCred
 	}
 
 	t.Run("GetSecret reports absent when vault is reachable", func(t *testing.T) {
-		c, mockVault := newClient(true)
+		c, mockCred := newClient(true)
 		_, err := c.GetSecret(context.Background(), esv1.ExternalSecretDataRemoteRef{Key: legacyKey})
 		assert.ErrorIs(t, err, esv1.NoSecretErr)
-		assert.Equal(t, 1, mockVault.getCalls)
+		assert.Equal(t, map[string]int{testVaultUUID: 1}, mockCred.entriesCalls)
 	})
 
 	t.Run("GetSecret errors when vault is unreachable", func(t *testing.T) {
@@ -1049,6 +1035,38 @@ func TestClient_DirectNotFound_DisambiguatesVault(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "must exist before pushing")
 	})
+}
+
+// An identity that can read a vault's metadata but not its content gets a 404 for the entry and for
+// the entry list, and a 403 on the list when it can open the vault but not view its entries. Neither
+// may become NoSecretErr, or deletionPolicy: Delete would prune a Secret whose entry still exists.
+func TestClient_DirectNotFound_ContentDenied(t *testing.T) {
+	legacyKey := testVaultUUID + "/" + testEntryUUID
+
+	for _, status := range []int{http.StatusNotFound, http.StatusForbidden} {
+		listErr := &dvls.RequestError{Err: fmt.Errorf("unexpected status code %d", status), StatusCode: status}
+		newClient := func() *Client {
+			c, mockCred, _ := newDynamicTestClient(nil, defaultTestVaults())
+			mockCred.getEntriesErr = listErr
+			return c
+		}
+
+		t.Run(fmt.Sprintf("list %d", status), func(t *testing.T) {
+			_, err := newClient().GetSecret(context.Background(), esv1.ExternalSecretDataRemoteRef{Key: legacyKey})
+			assert.Error(t, err)
+			assert.NotErrorIs(t, err, esv1.NoSecretErr)
+
+			_, err = newClient().GetSecretMap(context.Background(), esv1.ExternalSecretDataRemoteRef{Key: legacyKey})
+			assert.Error(t, err)
+			assert.NotErrorIs(t, err, esv1.NoSecretErr)
+
+			assert.Error(t, newClient().DeleteSecret(context.Background(), pushSecretRemoteRefStub{remoteKey: legacyKey}))
+
+			exists, err := newClient().SecretExists(context.Background(), pushSecretRemoteRefStub{remoteKey: legacyKey})
+			assert.Error(t, err)
+			assert.False(t, exists)
+		})
+	}
 }
 
 // Ordinary transport failures must keep their error chain: a reconciler canceling its

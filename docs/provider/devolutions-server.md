@@ -87,7 +87,7 @@ A key with no separator is rejected, since there is no vault to fall back to. Em
 
 **Renames:** a vault name is a convenience reference, not a stable identifier. Renaming a vault changes what its old name resolves to. Use UUIDs where that matters.
 
-**Missing vault vs. missing entry:** DVLS addresses an entry as `/vault/{vault}/entry/{entry}`, so a `404` alone cannot say which of the two is gone. The provider confirms the vault before reporting an entry as absent, so a deleted or inaccessible vault surfaces as an error rather than an empty secret. This matters under `deletionPolicy: Delete`, where a secret reported absent is removed from the cluster.
+**Missing vault vs. missing entry:** DVLS addresses an entry as `/vault/{vault}/entry/{entry}`, so a `404` alone cannot say which of the two is gone. Before reporting an entry as absent, the provider lists the vault's entries to confirm it can read the vault's content, since DVLS answers the same `404` for a vault the application cannot open. A deleted vault, or one the application can see but not open, surfaces as an error rather than an empty secret. This matters under `deletionPolicy: Delete`, where a secret reported absent is removed from the cluster.
 
 ### Folder paths
 

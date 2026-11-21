@@ -29,6 +29,8 @@ import (
 	"github.com/Devolutions/go-dvls"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	esv1 "github.com/external-secrets/external-secrets/apis/externalsecrets/v1"
 )
 
 // The client asks for 500 vaults per page; serving fewer makes 30 vaults span several pages.
@@ -112,6 +114,69 @@ func newPaginatedDVLSServer(t *testing.T, vaults []mockVault) *httptest.Server {
 	t.Cleanup(server.Close)
 
 	return server
+}
+
+// newContentDeniedDVLSServer serves an identity that can read the metadata of testVaultUUID but, unless
+// contentReadable, not its content: the entry and the entry list answer the 404 DVLS gives a vault the
+// caller cannot open.
+func newContentDeniedDVLSServer(t *testing.T, contentReadable bool) *httptest.Server {
+	t.Helper()
+
+	notFound := func(w http.ResponseWriter) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"The requested resource was not found."}`))
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v2/login", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tokenId":"test-token"}`))
+	})
+	mux.HandleFunc("GET /api/v2/vault/{vaultId}", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": r.PathValue("vaultId"), "name": testVaultName})
+	})
+	mux.HandleFunc("GET /api/v2/vault/{vaultId}/entry/{entryId}", func(w http.ResponseWriter, _ *http.Request) {
+		notFound(w)
+	})
+	mux.HandleFunc("GET /api/v2/vault/{vaultId}/entry", func(w http.ResponseWriter, _ *http.Request) {
+		if !contentReadable {
+			notFound(w)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[],"currentPage":1,"pageSize":500,"totalCount":0,"totalPage":0}`))
+	})
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+func TestClient_GetSecret_RealClientContentDenied(t *testing.T) {
+	key := testVaultUUID + "/" + testEntryUUID
+
+	for _, tt := range []struct {
+		name            string
+		contentReadable bool
+		wantNoSecret    bool
+	}{
+		{name: "vault metadata readable, content denied", contentReadable: false, wantNoSecret: false},
+		{name: "vault content readable", contentReadable: true, wantNoSecret: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := newContentDeniedDVLSServer(t, tt.contentReadable)
+			client, err := dvls.NewClient("app-id", "app-secret", server.URL)
+			require.NoError(t, err)
+
+			c := NewClient(&realCredentialClient{cred: client.Entries.Credential}, &realVaultClient{vaults: client.Vaults}, "", false)
+			_, err = c.GetSecret(context.Background(), esv1.ExternalSecretDataRemoteRef{Key: key})
+			require.Error(t, err)
+			if tt.wantNoSecret {
+				assert.ErrorIs(t, err, esv1.NoSecretErr)
+			} else {
+				assert.NotErrorIs(t, err, esv1.NoSecretErr)
+			}
+		})
+	}
 }
 
 func newMockVaults() []mockVault {

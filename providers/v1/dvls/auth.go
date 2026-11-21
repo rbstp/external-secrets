@@ -36,10 +36,6 @@ func (r *realVaultClient) GetByName(ctx context.Context, name string) (dvls.Vaul
 	return r.vaults.GetByNameWithContext(ctx, name)
 }
 
-func (r *realVaultClient) Get(ctx context.Context, id string) (dvls.Vault, error) {
-	return r.vaults.GetWithContext(ctx, id)
-}
-
 func (r *realVaultClient) List(ctx context.Context) ([]dvls.Vault, error) {
 	return r.vaults.ListWithContext(ctx)
 }
