@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../../pictures/eso-round-logo.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -5371,6 +5371,7 @@
 <li>If a given set of keys do not match any Rewrite operation, there will be no error. Rather, the original keys will be used.</li>
 <li>In Regexp operations, if a <code>source</code> is not a compilable <code>regexp</code> expression, an error will be produced and the external secret will go into a error state.</li>
 <li>In Merge operations, if secrets are not valid JSON, an error will be produced and the external secret will go into an error state.</li>
+<li>The keys produced by one Regexp or Transform operation are limited to 1 MiB in total. A Regexp operation is refused before it runs when an upper bound of its result (computed from the lengths of the key and of the <code>target</code>) passes that limit; an error will be produced and the external secret will go into an error state.</li>
 </ol>
 <h2 id="examples">Examples</h2>
 <h3 id="removing-a-common-path-from-find-operations">Removing a common path from find operations</h3>
@@ -5646,7 +5647,7 @@ For a list of trademarks of The Linux Foundation, please see our <a href="https:
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.expand"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
