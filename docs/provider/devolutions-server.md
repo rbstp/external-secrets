@@ -4,6 +4,10 @@ External Secrets Operator integrates with [Devolutions Server](https://devolutio
 
 DVLS is a self-hosted privileged access management solution that provides secure password management, role-based access control, and credential injection for teams and enterprises.
 
+## Requirements
+
+The provider calls the DVLS public API v2 (`/api/v2`), so it needs the first DVLS release that has it, or a later one. It does not work with an older DVLS server.
+
 ## Authentication
 
 DVLS authentication uses Application ID and Application Secret credentials.
@@ -67,7 +71,7 @@ The first segment of the key names the vault, and the rest identifies the entry 
 | Vault name with folder path | `payments/infrastructure/databases/db-credentials` |
 | Vault UUID and entry UUID | `054890f4-.../be3b23b3-...` |
 
-The vault and the entry each accept a name or a UUID.
+The vault and the entry each accept a name or a UUID. Names match ignoring case, as DVLS compares them: `Payments/DB-Credentials` finds the entry `db-credentials` in the vault `payments`. When vault names differ only by case, the exact name selects one, and a name that matches several of them only by ignoring case is rejected.
 
 **UUID-shaped names are reserved.** A segment that parses as a UUID is always treated as an ID, never looked up as a name. So a vault, folder or entry whose name happens to look like a UUID cannot be addressed by that name — use its real UUID instead. For the same reason a folder path cannot start with a UUID-shaped segment: `payments/<uuid-like-folder>/db-credentials` is rejected.
 
