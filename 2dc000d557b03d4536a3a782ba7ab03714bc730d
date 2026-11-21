@@ -1,0 +1,1 @@
+Needs go-dvls bae1e6b (feat(vaults): add ContentReadable) or later in the v1.0.0 tag; tested with a go.work replace onto the go-dvls feat/api-v2 checkout at badbd0e. go.sum still lacks go-dvls v1.0.0 (not tagged yet).
